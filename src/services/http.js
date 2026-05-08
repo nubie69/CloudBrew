@@ -62,27 +62,16 @@ export async function request(path, options = {}) {
     }
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-      try {
-        response = await fetch(targetUrl, {
-          ...options,
-          headers: mergedHeaders,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      response = await fetch(targetUrl, {
+        ...options,
+        headers: mergedHeaders,
+      });
 
       responseUrl = targetUrl;
       break;
     } catch (error) {
-      const isTimeoutAbort = String(error?.name || '').toLowerCase() === 'aborterror';
       if (!isNetworkFailure(error)) {
-        if (!isTimeoutAbort) {
-          throw error;
-        }
+        throw error;
       }
 
       lastNetworkError = error;
@@ -126,4 +115,8 @@ export async function request(path, options = {}) {
   }
 
   return payload;
+}
+
+export function getApiUrl() {
+  return API_BASE_URLS.length > 0 ? API_BASE_URLS[0] : API_URL;
 }

@@ -7,7 +7,9 @@ import { useUser } from '../context/UserContext';
 import AdminScreen from '../screens/AdminScreen';
 import BaristaScreen from '../screens/BaristaScreen';
 import CashierScreen from '../screens/CashierScreen';
+import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import LoginScreen from '../screens/LoginScreen';
+import ResetPasswordScreen from '../screens/ResetPasswordScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -27,7 +29,7 @@ function StatusScreen({ title, subtitle, loading }) {
 
       <View style={styles.statusCard}>
       {loading ? <ActivityIndicator size="large" color={colors.accent} /> : null}
-      <Text style={[styles.statusTitle, { marginTop: loading ? 16 : 0 }]}>
+      <Text style={[styles.statusTitle, { marginTop: loading ? spacing.md : 0 }]}>
         {title}
       </Text>
       {subtitle ? <Text style={styles.statusSubtitle}>{subtitle}</Text> : null}
@@ -51,6 +53,30 @@ function RoleGate({ currentUser, allowedRoles, children }) {
 export default function AppNavigator() {
   const { currentUser, logout, ready, bootError } = useUser();
 
+  const handleLogout = (navigation) => {
+    logout();
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'LoginScreen' }],
+    });
+  };
+
+  const linking = {
+    prefixes: ['cloudbrew://'],
+    config: {
+      screens: {
+        LoginScreen: 'login',
+        ForgotPasswordScreen: 'forgot-password',
+        ResetPasswordScreen: {
+          path: 'reset-password',
+          parse: {
+            token: (token) => token,
+          },
+        },
+      },
+    },
+  };
+
   if (!ready) {
     return <StatusScreen title="Connecting to backend..." subtitle="Loading app data" loading />;
   }
@@ -60,7 +86,7 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <Stack.Navigator
         initialRouteName="LoginScreen"
         screenOptions={{
@@ -76,13 +102,15 @@ export default function AppNavigator() {
         }}
       >
         <Stack.Screen name="LoginScreen" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="ForgotPasswordScreen" component={ForgotPasswordScreen} options={{ title: 'Admin Recovery' }} />
+        <Stack.Screen name="ResetPasswordScreen" component={ResetPasswordScreen} options={{ title: 'Reset Admin Password' }} />
 
         <Stack.Screen
           name="CashierScreen"
-          options={{
+          options={({ navigation }) => ({
             title: 'Cashier POS',
-            headerRight: () => <LogoutButton onPress={logout} />,
-          }}
+            headerRight: () => <LogoutButton onPress={() => handleLogout(navigation)} />,
+          })}
         >
           {() => (
             <RoleGate currentUser={currentUser} allowedRoles={['cashier', 'admin']}>
@@ -93,10 +121,10 @@ export default function AppNavigator() {
 
         <Stack.Screen
           name="BaristaScreen"
-          options={{
+          options={({ navigation }) => ({
             title: 'Barista Board',
-            headerRight: () => <LogoutButton onPress={logout} />,
-          }}
+            headerRight: () => <LogoutButton onPress={() => handleLogout(navigation)} />,
+          })}
         >
           {() => (
             <RoleGate currentUser={currentUser} allowedRoles={['barista', 'admin']}>
@@ -107,10 +135,10 @@ export default function AppNavigator() {
 
         <Stack.Screen
           name="AdminScreen"
-          options={{
+          options={({ navigation }) => ({
             title: 'Admin Control',
-            headerRight: () => <LogoutButton onPress={logout} />,
-          }}
+            headerRight: () => <LogoutButton onPress={() => handleLogout(navigation)} />,
+          })}
         >
           {() => (
             <RoleGate currentUser={currentUser} allowedRoles={['admin']}>
@@ -130,7 +158,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    paddingVertical: spacing.xs,
   },
   logoutButtonText: {
     color: colors.accentDark,

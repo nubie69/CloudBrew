@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { colors, radius, spacing, typography } from '../assets/styles/theme';
 import { useUser } from '../context/UserContext';
 
 const ROLES = [
-  { label: 'Cashier', value: 'cashier' },
-  { label: 'Barista', value: 'barista' },
-  { label: 'Admin', value: 'admin' },
+  { label: 'Cashier', value: 'cashier', icon: 'cart-outline' },
+  { label: 'Barista', value: 'barista', icon: 'cafe-outline' },
+  { label: 'Admin', value: 'admin', icon: 'shield-checkmark-outline' },
 ];
 
 const DEFAULT_EMAIL_BY_ROLE = {
@@ -18,19 +19,12 @@ const DEFAULT_EMAIL_BY_ROLE = {
 
 export default function LoginScreen() {
   const navigation = useNavigation();
-  const { login, requestAdminResetCode, resetAdminAccountPassword } = useUser();
+  const { login } = useUser();
   const [selectedRole, setSelectedRole] = useState('cashier');
   const [email, setEmail] = useState(DEFAULT_EMAIL_BY_ROLE.cashier);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  const [showResetPanel, setShowResetPanel] = useState(false);
-  const [resetEmail, setResetEmail] = useState(DEFAULT_EMAIL_BY_ROLE.admin);
-  const [resetCode, setResetCode] = useState('');
-  const [resetNewPassword, setResetNewPassword] = useState('');
-  const [resetMessage, setResetMessage] = useState('');
-  const [resetLoading, setResetLoading] = useState(false);
 
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardLift = useRef(new Animated.Value(24)).current;
@@ -46,10 +40,6 @@ export default function LoginScreen() {
     setSelectedRole(role);
     setEmail(DEFAULT_EMAIL_BY_ROLE[role] || '');
     setError('');
-    if (role !== 'admin') {
-      setShowResetPanel(false);
-      setResetMessage('');
-    }
   };
 
   const onLogin = async () => {
@@ -78,50 +68,8 @@ export default function LoginScreen() {
     }
   };
 
-  const requestResetCode = async () => {
-    if (!resetEmail.trim()) {
-      setResetMessage('Recovery email is required.');
-      return;
-    }
-
-    try {
-      setResetLoading(true);
-      setResetMessage('');
-      const result = await requestAdminResetCode(resetEmail.trim().toLowerCase());
-      const devCodeHint = result?.devResetCode ? ` Reset code: ${result.devResetCode}` : '';
-      setResetMessage(`${result?.message || 'Reset code requested.'}${devCodeHint}`);
-    } catch (err) {
-      setResetMessage(err.message);
-    } finally {
-      setResetLoading(false);
-    }
-  };
-
-  const resetAdminPassword = async () => {
-    if (!resetCode.trim() || !resetNewPassword.trim()) {
-      setResetMessage('Reset code and new password are required.');
-      return;
-    }
-
-    try {
-      setResetLoading(true);
-      setResetMessage('');
-      await resetAdminAccountPassword(resetEmail.trim().toLowerCase(), resetCode.trim(), resetNewPassword.trim());
-      setResetCode('');
-      setResetNewPassword('');
-      setPassword('');
-      setSelectedRole('admin');
-      setEmail(resetEmail.trim().toLowerCase());
-      setResetMessage('Admin password reset complete. Sign in with your new password.');
-    } catch (err) {
-      setResetMessage(err.message);
-    } finally {
-      setResetLoading(false);
-    }
-  };
-
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}>
       <View style={styles.ambientTop} />
       <View style={styles.ambientBottom} />
 
@@ -144,7 +92,10 @@ export default function LoginScreen() {
               const active = role.value === selectedRole;
               return (
                 <Pressable key={role.value} style={[styles.roleButton, active && styles.activeRoleButton]} onPress={() => onRoleSelect(role.value)}>
-                  <Text style={[styles.roleText, active && styles.activeRoleText]}>{role.label}</Text>
+                  <View style={styles.roleButtonInner}>
+                    <Ionicons name={role.icon} size={18} color={active ? colors.inkInverse : colors.accentDark} />
+                    <Text style={[styles.roleText, active && styles.activeRoleText]}>{role.label}</Text>
+                  </View>
                 </Pressable>
               );
             })}
@@ -154,7 +105,7 @@ export default function LoginScreen() {
           <TextInput
             value={email}
             onChangeText={setEmail}
-            placeholder="name@cloudbrew.app"
+            placeholder="Input your Email"
             placeholderTextColor={colors.muted}
             autoCapitalize="none"
             keyboardType="email-address"
@@ -178,56 +129,9 @@ export default function LoginScreen() {
           </Pressable>
 
           {selectedRole === 'admin' ? (
-            <Pressable style={styles.linkButton} onPress={() => setShowResetPanel((prev) => !prev)}>
-              <Text style={styles.linkButtonText}>{showResetPanel ? 'Hide Admin Recovery' : 'Forgot Admin Password?'}</Text>
+            <Pressable style={styles.linkButton} onPress={() => navigation.navigate('ForgotPasswordScreen')}>
+              <Text style={styles.linkButtonText}>Forgot Admin Password?</Text>
             </Pressable>
-          ) : null}
-
-          {selectedRole === 'admin' && showResetPanel ? (
-            <View style={styles.resetPanel}>
-              <Text style={styles.resetTitle}>Admin Recovery</Text>
-              <Text style={styles.resetHint}>Use your configured recovery email to request a reset code, then set a new password.</Text>
-
-              <TextInput
-                value={resetEmail}
-                onChangeText={setResetEmail}
-                placeholder="admin.recovery@cloudbrew.app"
-                placeholderTextColor={colors.muted}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                style={styles.input}
-              />
-
-              <View style={styles.actionRow}>
-                <Pressable style={[styles.secondaryButton, resetLoading && styles.disabledButton]} onPress={requestResetCode} disabled={resetLoading}>
-                  <Text style={styles.secondaryText}>Request Code</Text>
-                </Pressable>
-              </View>
-
-              <TextInput
-                value={resetCode}
-                onChangeText={setResetCode}
-                placeholder="Reset code"
-                placeholderTextColor={colors.muted}
-                keyboardType="number-pad"
-                style={styles.input}
-              />
-
-              <TextInput
-                value={resetNewPassword}
-                onChangeText={setResetNewPassword}
-                placeholder="New admin password"
-                placeholderTextColor={colors.muted}
-                secureTextEntry
-                style={styles.input}
-              />
-
-              <Pressable style={[styles.loginButton, resetLoading && styles.disabledButton]} onPress={resetAdminPassword} disabled={resetLoading}>
-                {resetLoading ? <ActivityIndicator color={colors.inkInverse} /> : <Text style={styles.loginText}>Reset Admin Password</Text>}
-              </Pressable>
-
-              {resetMessage ? <Text style={styles.hintLine}>{resetMessage}</Text> : null}
-            </View>
           ) : null}
 
           <View style={styles.hintBox}>
@@ -238,7 +142,7 @@ export default function LoginScreen() {
           </View>
         </Animated.View>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -279,6 +183,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radius.xl,
     padding: spacing.lg,
+    maxWidth: 680,
+    width: '100%',
+    alignSelf: 'center',
     shadowColor: colors.shadow,
     shadowOpacity: 0.16,
     shadowOffset: { width: 0, height: 18 },
@@ -303,7 +210,7 @@ const styles = StyleSheet.create({
   subtitle: {
     marginTop: spacing.sm,
     color: colors.muted,
-    lineHeight: 21,
+    lineHeight: 22,
     marginBottom: spacing.md,
   },
   roleRow: {
@@ -319,8 +226,15 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.panel,
-    minWidth: 94,
+    minWidth: 102,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+  },
+  roleButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xxs,
   },
   activeRoleButton: {
     backgroundColor: colors.accent,
@@ -352,7 +266,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   errorText: {
-    marginTop: 2,
+    marginTop: spacing.xxs,
     color: colors.danger,
     fontWeight: '600',
   },
@@ -362,7 +276,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.accentDark,
-    paddingVertical: spacing.md,
+    minHeight: 50,
+    paddingVertical: spacing.sm,
     alignItems: 'center',
   },
   disabledButton: {
@@ -378,7 +293,8 @@ const styles = StyleSheet.create({
   linkButton: {
     marginTop: spacing.sm,
     alignSelf: 'flex-start',
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
   },
   linkButtonText: {
     color: colors.accentDark,

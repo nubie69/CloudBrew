@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     fontFamily: typography.mono,
     backgroundColor: colors.panelMuted,
     paddingHorizontal: spacing.xs,
-    paddingVertical: 3,
+    paddingVertical: spacing.xxs,
     borderRadius: radius.sm,
   },
   drinkLabel: {
@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.xs,
-    paddingVertical: 4,
+    paddingVertical: spacing.xxs,
   },
   metaChipText: {
     color: colors.text,
@@ -138,11 +138,11 @@ const styles = StyleSheet.create({
     color: colors.accentDark,
     fontFamily: typography.heading,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: spacing.xxs,
   },
   recipeText: {
     color: colors.text,
-    marginTop: 2,
+    marginTop: spacing.xxs,
     lineHeight: 20,
   },
   actionsRow: {
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
     borderColor: colors.accentDark,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    minHeight: 34,
+    minHeight: spacing.lg + spacing.sm,
     justifyContent: 'center',
   },
   actionButtonDisabled: {
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.panel,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    minHeight: 34,
+    minHeight: spacing.lg + spacing.sm,
     justifyContent: 'center',
   },
   recipeButtonText: {

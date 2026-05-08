@@ -5,6 +5,20 @@ import OrderCard from '../components/OrderCard';
 import { useUser } from '../context/UserContext';
 import { ADD_ON_OPTIONS, DRINK_OPTIONS, SIZE_OPTIONS } from '../utils/helpers';
 
+const CASHIER_FLOW_STEPS = [
+  { key: 'builder', title: '1. Build', subtitle: 'Select drink, size, and add-ons.' },
+  { key: 'summary', title: '2. Review', subtitle: 'Edit lines and confirm totals.' },
+  { key: 'queue', title: '3. Dispatch', subtitle: 'Send to barista queue and monitor.' },
+];
+
+const LIVE_QUEUE_FILTERS = ['all', 'pending', 'in-progress', 'completed'];
+const CASHIER_VIEWS = [
+  { key: 'all', label: 'All Panels' },
+  { key: 'builder', label: 'Builder' },
+  { key: 'summary', label: 'Summary' },
+  { key: 'queue', label: 'Live Queue' },
+];
+
 function formatOrderLine(item) {
   const addonsLabel = item.addons.length ? item.addons.join(', ') : 'None';
   return `${item.quantity} x ${item.item} (${item.size}) + ${addonsLabel}`;
@@ -52,7 +66,7 @@ function QuantitySelector({ value, onIncrease, onDecrease }) {
 export default function CashierScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 1080;
-  const { orders, placeOrder, recipes } = useUser();
+  const { orders, placeOrder, recipes, realtimeStatus } = useUser();
   const drinkOptions = useMemo(() => {
     const recipeDrinks = Object.keys(recipes || {}).sort((a, b) => a.localeCompare(b));
     return recipeDrinks.length ? recipeDrinks : DRINK_OPTIONS;
@@ -69,6 +83,8 @@ export default function CashierScreen() {
   const [editingItemId, setEditingItemId] = useState('');
   const [submittingQueue, setSubmittingQueue] = useState(false);
   const [showDrinkDropdown, setShowDrinkDropdown] = useState(false);
+  const [liveQueueFilter, setLiveQueueFilter] = useState('all');
+  const [activeView, setActiveView] = useState('all');
 
   useEffect(() => {
     if (!drinkOptions.includes(item)) {
@@ -83,6 +99,23 @@ export default function CashierScreen() {
 
   const liveQueueQuantity = useMemo(
     () => sortedOrders.reduce((sum, order) => sum + (order.quantity || 1), 0),
+    [sortedOrders]
+  );
+
+  const filteredOrders = useMemo(() => {
+    if (liveQueueFilter === 'all') {
+      return sortedOrders;
+    }
+    return sortedOrders.filter((order) => order.status === liveQueueFilter);
+  }, [sortedOrders, liveQueueFilter]);
+
+  const pendingOrdersCount = useMemo(
+    () => sortedOrders.filter((order) => order.status === 'pending').length,
+    [sortedOrders]
+  );
+
+  const inProgressOrdersCount = useMemo(
+    () => sortedOrders.filter((order) => order.status === 'in-progress').length,
     [sortedOrders]
   );
 
@@ -181,12 +214,19 @@ export default function CashierScreen() {
     ]);
   };
 
+  const showBuilderPanel = activeView === 'all' || activeView === 'builder';
+  const showSummaryPanel = activeView === 'all' || activeView === 'summary';
+  const showQueuePanel = activeView === 'all' || activeView === 'queue';
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.heroCard}>
         <Text style={styles.heroEyebrow}>Cashier Station</Text>
         <Text style={styles.heroTitle}>Build Orders Fast</Text>
         <Text style={styles.heroSubtitle}>Configure drinks and send them straight to the barista board.</Text>
+        <View style={[styles.realtimeBadge, realtimeStatus?.state === 'connected' ? styles.realtimeBadgeConnected : styles.realtimeBadgeWarning]}>
+          <Text style={styles.realtimeBadgeText}>{realtimeStatus?.message || 'Realtime offline'}</Text>
+        </View>
 
         <View style={styles.heroStatsRow}>
           <View style={styles.heroStatPill}>
@@ -204,11 +244,32 @@ export default function CashierScreen() {
             <Text style={styles.heroStatValue}>{liveQueueQuantity}</Text>
           </View>
         </View>
+
+        <View style={styles.heroSubStatsRow}>
+          <Text style={styles.heroSubStatText}>Pending: {pendingOrdersCount}</Text>
+          <Text style={styles.heroSubStatText}>In Progress: {inProgressOrdersCount}</Text>
+        </View>
+      </View>
+
+      <View style={styles.flowStepsRow}>
+        {CASHIER_FLOW_STEPS.map((step) => (
+          <View key={step.key} style={styles.flowStepCard}>
+            <Text style={styles.flowStepTitle}>{step.title}</Text>
+            <Text style={styles.flowStepSubtitle}>{step.subtitle}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.viewSwitchRow}>
+        {CASHIER_VIEWS.map((view) => (
+          <ChoicePill key={view.key} label={view.label} active={activeView === view.key} onPress={() => setActiveView(view.key)} />
+        ))}
       </View>
 
       <View style={[styles.workbenchGrid, isWide && styles.workbenchGridWide]}>
-        <View style={styles.workbenchColumn}>
+        {showBuilderPanel ? <View style={styles.workbenchColumn}>
           <Text style={styles.sectionTitle}>Order Builder</Text>
+          <Text style={styles.sectionSubtitle}>Step 1: Configure each line item before adding to the order summary.</Text>
           <View style={styles.sectionCard}>
             <Text style={styles.fieldLabel}>Drink (Dropdown)</Text>
             <Pressable style={styles.dropdownTrigger} onPress={() => setShowDrinkDropdown((prev) => !prev)}>
@@ -282,13 +343,14 @@ export default function CashierScreen() {
               </Pressable>
             ) : null}
           </View>
-        </View>
+        </View> : null}
 
-        <View style={styles.workbenchColumn}>
+        {showSummaryPanel ? <View style={styles.workbenchColumn}>
           <View style={styles.queueHeader}>
             <Text style={styles.sectionTitle}>Order Summary Panel</Text>
             <Text style={styles.queueCount}>{orderItems.length} lines</Text>
           </View>
+          <Text style={styles.sectionSubtitle}>Step 2: Confirm details, edit mistakes, then submit the full order.</Text>
 
           <View style={styles.sectionCard}>
             {orderItems.length ? (
@@ -322,23 +384,37 @@ export default function CashierScreen() {
               </View>
             )}
           </View>
-        </View>
+        </View> : null}
       </View>
 
+      {showQueuePanel ? <>
       <View style={styles.queueHeader}>
         <Text style={styles.sectionTitle}>Live Queue Board</Text>
-        <Text style={styles.queueCount}>{sortedOrders.length} orders</Text>
+        <Text style={styles.queueCount}>{filteredOrders.length} orders</Text>
+      </View>
+      <Text style={styles.sectionSubtitle}>Step 3: Track what baristas are currently working on in real time.</Text>
+
+      <View style={styles.queueFilterRow}>
+        {LIVE_QUEUE_FILTERS.map((filterKey) => (
+          <ChoicePill
+            key={filterKey}
+            label={filterKey === 'all' ? 'All' : filterKey.replace('-', ' ')}
+            active={liveQueueFilter === filterKey}
+            onPress={() => setLiveQueueFilter(filterKey)}
+          />
+        ))}
       </View>
 
       <View style={styles.sectionCard}>
-        {sortedOrders.length ? (
-          sortedOrders.map((order) => <OrderCard key={order.id} order={order} />)
+        {filteredOrders.length ? (
+          filteredOrders.map((order) => <OrderCard key={order.id} order={order} />)
         ) : (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>Queue is empty right now.</Text>
+            <Text style={styles.emptyText}>No orders found for this queue filter.</Text>
           </View>
         )}
       </View>
+      </> : null}
     </ScrollView>
   );
 }
@@ -384,6 +460,28 @@ const styles = StyleSheet.create({
     color: colors.heroSubtle,
     lineHeight: 20,
   },
+  realtimeBadge: {
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
+    alignSelf: 'flex-start',
+  },
+  realtimeBadgeConnected: {
+    backgroundColor: 'rgba(76, 175, 80, 0.18)',
+    borderColor: 'rgba(76, 175, 80, 0.4)',
+  },
+  realtimeBadgeWarning: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  realtimeBadgeText: {
+    color: colors.inkInverse,
+    fontFamily: typography.heading,
+    fontWeight: '700',
+    fontSize: 12,
+  },
   heroStatsRow: {
     marginTop: spacing.md,
     flexDirection: 'row',
@@ -417,12 +515,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  heroSubStatsRow: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  heroSubStatText: {
+    color: colors.heroSubtle,
+    fontFamily: typography.heading,
+    fontWeight: '700',
+  },
+  flowStepsRow: {
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  flowStepCard: {
+    flex: 1,
+    minWidth: 170,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  flowStepTitle: {
+    color: colors.accentDark,
+    fontFamily: typography.heading,
+    fontWeight: '800',
+  },
+  flowStepSubtitle: {
+    marginTop: 2,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  viewSwitchRow: {
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
   sectionTitle: {
     color: colors.text,
-    fontSize: 22,
+    fontSize: 24,
     fontFamily: typography.heading,
     fontWeight: '800',
     marginBottom: spacing.sm,
+  },
+  sectionSubtitle: {
+    color: colors.muted,
+    marginBottom: spacing.sm,
+    marginTop: -2,
+    lineHeight: 20,
   },
   sectionCard: {
     backgroundColor: colors.panelRaised,
@@ -619,7 +772,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accentDark,
     alignItems: 'center',
-    paddingVertical: spacing.md,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingVertical: spacing.sm,
   },
   proceedText: {
     color: colors.white,
@@ -633,7 +788,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingVertical: spacing.xs,
     backgroundColor: colors.panel,
   },
   secondaryButtonText: {
@@ -707,8 +864,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  queueFilterRow: {
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
   queueCount: {
     color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
     fontWeight: '700',
   },
   emptyCard: {

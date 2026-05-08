@@ -8,16 +8,16 @@ export function loginWithCredentials(role, email, password) {
 }
 
 export function requestAdminPasswordReset(recoveryEmail) {
-  return request('/auth/forgot-password', {
+  return request('/admin-recovery', {
     method: 'POST',
-    body: JSON.stringify({ recoveryEmail }),
+    body: JSON.stringify({ email: recoveryEmail }),
   });
 }
 
-export function resetAdminPassword(recoveryEmail, resetCode, newPassword) {
+export function resetAdminPassword(token, newPassword) {
   return request('/auth/reset-password', {
     method: 'POST',
-    body: JSON.stringify({ recoveryEmail, resetCode, newPassword }),
+    body: JSON.stringify({ token, newPassword }),
   });
 }
 

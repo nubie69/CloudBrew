@@ -61,6 +61,8 @@ export default function AdminScreen() {
     staff,
     staffMeta,
     adminSettings,
+    dashboardMetrics,
+    realtimeStatus,
     updateRecipe,
     removeRecipe,
     addStaffMember,
@@ -70,8 +72,10 @@ export default function AdminScreen() {
     loadStaff,
     loadLogs,
     generateReport,
+    runIntegrationSelfTest,
     updateAdminPassword,
     saveAdminRecoveryEmail,
+    uploadProductImage,
   } = useUser();
 
   const drinkNames = useMemo(() => Object.keys(recipes).sort((a, b) => a.localeCompare(b)), [recipes]);
@@ -119,8 +123,11 @@ export default function AdminScreen() {
 
   const [reportSnapshot, setReportSnapshot] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [selfTestLoading, setSelfTestLoading] = useState(false);
+  const [selfTestResult, setSelfTestResult] = useState(null);
   const [activePanel, setActivePanel] = useState(ADMIN_PANELS.overview);
   const [showControlMap, setShowControlMap] = useState(false);
+  const [uploadingImageSlot, setUploadingImageSlot] = useState('');
 
   const loadStaffPage = async (pageValue, queryValue) => {
     setLoadingStaffList(true);
@@ -183,7 +190,7 @@ export default function AdminScreen() {
   const totalRecipes = drinkNames.length;
   const totalStaff = staffMeta.total || staff.length;
 
-  const pickRecipeImageFromDevice = async (setImageValue) => {
+  const pickRecipeImageFromDevice = async (setImageValue, slotKey) => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission?.granted) {
@@ -216,9 +223,19 @@ export default function AdminScreen() {
         return;
       }
 
-      setImageValue(dataUri);
+      setUploadingImageSlot(slotKey);
+      const uploaded = await uploadProductImage(dataUri);
+      setImageValue(uploaded?.imageUrl || dataUri);
+
+      if (uploaded?.storageProvider === 'cloudinary') {
+        Alert.alert('Image uploaded', 'Product image was uploaded to cloud storage successfully.');
+      } else {
+        Alert.alert('Image attached', 'Cloudinary is not configured, so image is stored inline for now.');
+      }
     } catch (error) {
       Alert.alert('Unable to pick image', error.message);
+    } finally {
+      setUploadingImageSlot('');
     }
   };
 
@@ -339,6 +356,19 @@ export default function AdminScreen() {
       Alert.alert('Unable to generate report', error.message);
     } finally {
       setReportLoading(false);
+    }
+  };
+
+  const runSelfTest = async () => {
+    try {
+      setSelfTestLoading(true);
+      const result = await runIntegrationSelfTest();
+      setSelfTestResult(result || null);
+      Alert.alert('Self-test complete', 'Monitoring and realtime checks have been executed.');
+    } catch (error) {
+      Alert.alert('Self-test failed', error.message);
+    } finally {
+      setSelfTestLoading(false);
     }
   };
 
@@ -621,29 +651,61 @@ export default function AdminScreen() {
             </View>
           </View>
 
+          <View style={styles.quickNavWrap}>
+            {SIDEBAR_LINKS.map((link) => (
+              <Pressable
+                key={link.key}
+                style={[styles.quickNavButton, activePanel === link.key && styles.quickNavButtonActive]}
+                onPress={() => openPanel(link.key)}
+              >
+                <Text style={[styles.quickNavButtonText, activePanel === link.key && styles.quickNavButtonTextActive]}>{link.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
           <View style={styles.panelHeaderRow}>
             <Text style={styles.sectionTitle}>{activePanelTitle}</Text>
-            <Text style={styles.panelHint}>Use the top-left menu icon to open the Control Map.</Text>
+            <Text style={styles.panelHint}>Choose a panel from the quick navigation above.</Text>
           </View>
 
           {activePanel === ADMIN_PANELS.overview ? (
             <>
+              <View style={styles.realtimeIndicator}>
+                <View style={[styles.realtimeDot, realtimeStatus?.state === 'connected' ? styles.realtimeDotActive : styles.realtimeDotInactive]} />
+                <Text style={styles.realtimeText}>{realtimeStatus?.message || 'Realtime offline'}</Text>
+              </View>
+
               <View style={[styles.panel, styles.metricsGrid]}>
                 <View style={styles.metricCard}>
-                  <Text style={styles.metricLabel}>Total Orders</Text>
-                  <Text style={styles.metricValue}>{orderSummary.total}</Text>
+                  <Text style={styles.metricLabel}>Total Sales Today</Text>
+                  <Text style={styles.metricValue}>${(dashboardMetrics.totalSalesToday || 0).toFixed(2)}</Text>
                 </View>
                 <View style={styles.metricCard}>
-                  <Text style={styles.metricLabel}>Pending</Text>
-                  <Text style={styles.metricValue}>{orderSummary.pending}</Text>
+                  <Text style={styles.metricLabel}>Queue Count</Text>
+                  <Text style={styles.metricValue}>{dashboardMetrics.currentQueueCount}</Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Active Baristas</Text>
+                  <Text style={styles.metricValue}>{dashboardMetrics.activeBaristas}</Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Active Cashiers</Text>
+                  <Text style={styles.metricValue}>{dashboardMetrics.activeCashiers}</Text>
+                </View>
+              </View>
+
+              <View style={[styles.panel, styles.metricsGrid]}>
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Pending Orders</Text>
+                  <Text style={styles.metricValue}>{dashboardMetrics.pendingOrders}</Text>
+                </View>
+                <View style={styles.metricCard}>
+                  <Text style={styles.metricLabel}>Completed Today</Text>
+                  <Text style={styles.metricValue}>{dashboardMetrics.completedOrders}</Text>
                 </View>
                 <View style={styles.metricCard}>
                   <Text style={styles.metricLabel}>In-Progress</Text>
                   <Text style={styles.metricValue}>{orderSummary['in-progress']}</Text>
-                </View>
-                <View style={styles.metricCard}>
-                  <Text style={styles.metricLabel}>Completed</Text>
-                  <Text style={styles.metricValue}>{orderSummary.completed}</Text>
                 </View>
                 <View style={styles.metricCardWide}>
                   <Text style={styles.metricLabel}>Audit Entries</Text>
@@ -651,106 +713,156 @@ export default function AdminScreen() {
                 </View>
               </View>
 
+              {dashboardMetrics.mostSoldDrinks.length > 0 ? (
+                <View style={styles.panel}>
+                  <Text style={styles.panelSubtitle}>Most Sold Drinks Today</Text>
+                  <View style={styles.drinkList}>
+                    {dashboardMetrics.mostSoldDrinks.map((drink, index) => (
+                      <View key={index} style={styles.drinkItem}>
+                        <Text style={styles.drinkRank}>#{index + 1}</Text>
+                        <Text style={styles.drinkName}>{drink.name}</Text>
+                        <Text style={styles.drinkCount}>{drink.count} sold</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              {dashboardMetrics.recentOrders.length > 0 ? (
+                <View style={styles.panel}>
+                  <Text style={styles.panelSubtitle}>Recent Orders</Text>
+                  <View style={styles.recentOrdersList}>
+                    {dashboardMetrics.recentOrders.slice(0, 5).map((order) => (
+                      <View key={order.id} style={styles.recentOrderItem}>
+                        <View style={styles.orderInfo}>
+                          <Text style={styles.orderItem}>{order.item}</Text>
+                          <Text style={styles.orderTime}>{formatTimestamp(order.createdAt)}</Text>
+                        </View>
+                        <Text style={[styles.orderStatus, order.status === 'completed' && styles.orderStatusCompleted]}>{order.status}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
               <ActionButton label="Generate Report Snapshot" onPress={refreshReport} loading={reportLoading} />
               {reportSnapshot ? (
                 <Text style={styles.reportMeta}>Report generated at {formatTimestamp(reportSnapshot.generatedAt)}</Text>
+              ) : null}
+
+              <ActionButton label="Run Monitoring + Queue Self-Test" onPress={runSelfTest} loading={selfTestLoading} />
+              {selfTestResult ? (
+                <Text style={styles.reportMeta}>
+                  Self-test {formatTimestamp(selfTestResult.checkedAt)} | Sentry: {selfTestResult.sentryEnabled ? 'ON' : 'OFF'} | Pusher: {selfTestResult.pusherConfigured ? 'Configured' : 'Missing'} | Event: {selfTestResult.pusherTriggered ? 'Sent' : 'Not Sent'}
+                </Text>
               ) : null}
             </>
           ) : null}
 
           {activePanel === ADMIN_PANELS.recipes ? (
             <View style={styles.panel}>
-              <Text style={styles.subSectionTitle}>Add New Coffee + Recipe</Text>
-              <Text style={styles.sectionHelp}>Create a coffee entry and recipe in one step.</Text>
-              <TextInput
-                value={newDrinkName}
-                onChangeText={setNewDrinkName}
-                placeholder="Example: Flat White"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-              />
+              <View style={styles.recipeToolsGrid}>
+                <View style={styles.recipeBlockCard}>
+                  <Text style={styles.recipeBlockTitle}>Add New Product + Recipe</Text>
+                  <Text style={styles.recipeBlockHint}>Create a new menu product with ingredients, preparation steps, and image.</Text>
 
-              <Text style={styles.fieldLabel}>Ingredients (one per line)</Text>
-              <TextInput
-                value={newIngredientsText}
-                onChangeText={setNewIngredientsText}
-                multiline
-                style={[styles.input, styles.textArea]}
-              />
+                  <Text style={styles.fieldLabel}>Product Name</Text>
+                  <TextInput
+                    value={newDrinkName}
+                    onChangeText={setNewDrinkName}
+                    placeholder="Example: Flat White"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                  />
 
-              <Text style={styles.fieldLabel}>Coffee Image (from device)</Text>
-              <View style={styles.actionRow}>
-                <ActionButton label="Upload From Device" onPress={() => pickRecipeImageFromDevice(setNewRecipeImageUrl)} />
-                <Pressable style={[styles.actionButton, styles.ghostButton]} onPress={() => setNewRecipeImageUrl('')}>
-                  <Text style={styles.ghostButtonText}>Clear Image</Text>
-                </Pressable>
-              </View>
-              {newRecipeImageUrl ? (
-                <Image source={{ uri: newRecipeImageUrl }} style={styles.recipeImagePreview} resizeMode="cover" />
-              ) : (
-                <Text style={styles.emptyMeta}>No image selected yet.</Text>
-              )}
+                  <Text style={styles.fieldLabel}>Ingredients (one per line)</Text>
+                  <TextInput
+                    value={newIngredientsText}
+                    onChangeText={setNewIngredientsText}
+                    multiline
+                    style={[styles.input, styles.textArea]}
+                  />
 
-              <Text style={styles.fieldLabel}>Steps (one per line)</Text>
-              <TextInput value={newStepsText} onChangeText={setNewStepsText} multiline style={[styles.input, styles.textArea]} />
+                  <Text style={styles.fieldLabel}>Product Image (from device)</Text>
+                  <View style={styles.actionRow}>
+                    <ActionButton
+                      label="Upload To Cloud"
+                      onPress={() => pickRecipeImageFromDevice(setNewRecipeImageUrl, 'new')}
+                      loading={uploadingImageSlot === 'new'}
+                    />
+                    <Pressable style={[styles.actionButton, styles.ghostButton]} onPress={() => setNewRecipeImageUrl('')}>
+                      <Text style={styles.ghostButtonText}>Clear Image</Text>
+                    </Pressable>
+                  </View>
+                  {newRecipeImageUrl ? (
+                    <Image source={{ uri: newRecipeImageUrl }} style={styles.recipeImagePreview} resizeMode="cover" />
+                  ) : (
+                    <Text style={styles.emptyMeta}>No image selected yet.</Text>
+                  )}
 
-              <ActionButton label="Add Coffee + Recipe" onPress={addNewCoffeeRecipe} loading={savingRecipe} />
+                  <Text style={styles.fieldLabel}>Steps (one per line)</Text>
+                  <TextInput value={newStepsText} onChangeText={setNewStepsText} multiline style={[styles.input, styles.textArea]} />
 
-              <View style={styles.sectionDivider} />
+                  <ActionButton label="Add Product + Recipe" onPress={addNewCoffeeRecipe} loading={savingRecipe} />
+                </View>
 
-              <Text style={styles.subSectionTitle}>Update Existing Recipe</Text>
-              <Text style={styles.sectionHelp}>Select a coffee to adjust ingredients or prep steps.</Text>
+                <View style={styles.recipeBlockCard}>
+                  <Text style={styles.recipeBlockTitle}>Update Existing Product</Text>
+                  <Text style={styles.recipeBlockHint}>Select an existing product to edit ingredients, steps, and image.</Text>
 
-              <Text style={styles.fieldLabel}>Select Existing Drink</Text>
-              <View style={styles.optionWrap}>
-                {drinkNames.map((drink) => (
-                  <RoleChip key={drink} role={drink} active={selectedDrink === drink} onPress={() => setSelectedDrink(drink)} />
-                ))}
-              </View>
+                  <Text style={styles.fieldLabel}>Select Existing Drink</Text>
+                  <View style={styles.optionWrap}>
+                    {drinkNames.map((drink) => (
+                      <RoleChip key={drink} role={drink} active={selectedDrink === drink} onPress={() => setSelectedDrink(drink)} />
+                    ))}
+                  </View>
 
-              {!drinkNames.length ? <Text style={styles.emptyMeta}>No coffees yet. Add one above.</Text> : null}
+                  {!drinkNames.length ? <Text style={styles.emptyMeta}>No products yet. Add one above.</Text> : null}
 
-              <Text style={styles.fieldLabel}>Ingredients (one per line)</Text>
-              <TextInput
-                value={ingredientsText}
-                onChangeText={setIngredientsText}
-                multiline
-                style={[styles.input, styles.textArea]}
-              />
+                  <Text style={styles.fieldLabel}>Ingredients (one per line)</Text>
+                  <TextInput
+                    value={ingredientsText}
+                    onChangeText={setIngredientsText}
+                    multiline
+                    style={[styles.input, styles.textArea]}
+                  />
 
-              <Text style={styles.fieldLabel}>Coffee Image (from device)</Text>
-              <View style={styles.actionRow}>
-                <ActionButton
-                  label="Replace From Device"
-                  onPress={() => pickRecipeImageFromDevice(setRecipeImageUrl)}
-                  disabled={!selectedDrink}
-                />
-                <Pressable
-                  style={[styles.actionButton, styles.ghostButton]}
-                  onPress={() => setRecipeImageUrl('')}
-                  disabled={!selectedDrink}
-                >
-                  <Text style={styles.ghostButtonText}>Remove Image</Text>
-                </Pressable>
-              </View>
-              {recipeImageUrl ? (
-                <Image source={{ uri: recipeImageUrl }} style={styles.recipeImagePreview} resizeMode="cover" />
-              ) : (
-                <Text style={styles.emptyMeta}>No image selected for this coffee.</Text>
-              )}
+                  <Text style={styles.fieldLabel}>Product Image (from device)</Text>
+                  <View style={styles.actionRow}>
+                    <ActionButton
+                      label="Replace In Cloud"
+                      onPress={() => pickRecipeImageFromDevice(setRecipeImageUrl, 'edit')}
+                      loading={uploadingImageSlot === 'edit'}
+                      disabled={!selectedDrink}
+                    />
+                    <Pressable
+                      style={[styles.actionButton, styles.ghostButton]}
+                      onPress={() => setRecipeImageUrl('')}
+                      disabled={!selectedDrink}
+                    >
+                      <Text style={styles.ghostButtonText}>Remove Image</Text>
+                    </Pressable>
+                  </View>
+                  {recipeImageUrl ? (
+                    <Image source={{ uri: recipeImageUrl }} style={styles.recipeImagePreview} resizeMode="cover" />
+                  ) : (
+                    <Text style={styles.emptyMeta}>No image selected for this coffee.</Text>
+                  )}
 
-              <Text style={styles.fieldLabel}>Steps (one per line)</Text>
-              <TextInput value={stepsText} onChangeText={setStepsText} multiline style={[styles.input, styles.textArea]} />
+                  <Text style={styles.fieldLabel}>Steps (one per line)</Text>
+                  <TextInput value={stepsText} onChangeText={setStepsText} multiline style={[styles.input, styles.textArea]} />
 
-              <View style={styles.actionRow}>
-                <ActionButton label="Update Recipe" onPress={saveRecipeChanges} loading={savingRecipe} disabled={!selectedDrink} />
-                <ActionButton
-                  label="Delete Recipe"
-                  onPress={onDeleteRecipe}
-                  loading={deletingRecipe}
-                  disabled={!selectedDrink}
-                  tone="danger"
-                />
+                  <View style={styles.actionRow}>
+                    <ActionButton label="Update Recipe" onPress={saveRecipeChanges} loading={savingRecipe} disabled={!selectedDrink} />
+                    <ActionButton
+                      label="Delete Recipe"
+                      onPress={onDeleteRecipe}
+                      loading={deletingRecipe}
+                      disabled={!selectedDrink}
+                      tone="danger"
+                    />
+                  </View>
+                </View>
               </View>
             </View>
           ) : null}
@@ -760,58 +872,67 @@ export default function AdminScreen() {
               <Text style={styles.subSectionTitle}>Admin Security</Text>
               <Text style={styles.sectionHelp}>Only the admin account can change its own password from this console.</Text>
 
-              <Text style={styles.fieldLabel}>Recovery Email</Text>
-              <TextInput
-                value={adminRecoveryEmail}
-                onChangeText={setAdminRecoveryEmail}
-                placeholder="admin.recovery@cloudbrew.app"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-              <ActionButton
-                label={adminSettings?.recoveryEmailConfigured ? 'Update Recovery Email' : 'Set Recovery Email'}
-                onPress={saveRecoveryEmail}
-                loading={savingRecoveryEmail}
-              />
-              <Text style={styles.sectionHelp}>Forgot-password is enabled only when this recovery email is configured.</Text>
+              <View style={styles.settingsToolsGrid}>
+                <View style={styles.settingsBlockCard}>
+                  <Text style={styles.settingsBlockTitle}>Recovery Configuration</Text>
+                  <Text style={styles.settingsBlockHint}>Enable secure forgot-password reset delivery for the admin account.</Text>
 
-              <View style={styles.sectionDivider} />
+                  <Text style={styles.fieldLabel}>Recovery Email</Text>
+                  <TextInput
+                    value={adminRecoveryEmail}
+                    onChangeText={setAdminRecoveryEmail}
+                    placeholder="Input your Email"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                  <ActionButton
+                    label={adminSettings?.recoveryEmailConfigured ? 'Update Recovery Email' : 'Set Recovery Email'}
+                    onPress={saveRecoveryEmail}
+                    loading={savingRecoveryEmail}
+                  />
+                  <Text style={styles.settingsNoteText}>Forgot-password works only when this recovery email is configured.</Text>
+                </View>
 
-              <Text style={styles.fieldLabel}>Current Admin Password</Text>
-              <TextInput
-                value={adminCurrentPassword}
-                onChangeText={setAdminCurrentPassword}
-                placeholder="Current password"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                secureTextEntry
-              />
+                <View style={styles.settingsBlockCard}>
+                  <Text style={styles.settingsBlockTitle}>Change Admin Password</Text>
+                  <Text style={styles.settingsBlockHint}>Rotate credentials periodically to maintain account security.</Text>
 
-              <Text style={styles.fieldLabel}>New Admin Password</Text>
-              <TextInput
-                value={adminNewPassword}
-                onChangeText={setAdminNewPassword}
-                placeholder="At least 8 characters"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                secureTextEntry
-              />
+                  <Text style={styles.fieldLabel}>Current Admin Password</Text>
+                  <TextInput
+                    value={adminCurrentPassword}
+                    onChangeText={setAdminCurrentPassword}
+                    placeholder="Current password"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    secureTextEntry
+                  />
 
-              <Text style={styles.fieldLabel}>Confirm New Password</Text>
-              <TextInput
-                value={adminConfirmPassword}
-                onChangeText={setAdminConfirmPassword}
-                placeholder="Re-enter new password"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                secureTextEntry
-              />
+                  <Text style={styles.fieldLabel}>New Admin Password</Text>
+                  <TextInput
+                    value={adminNewPassword}
+                    onChangeText={setAdminNewPassword}
+                    placeholder="At least 8 characters"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    secureTextEntry
+                  />
 
-              <ActionButton label="Update Admin Password" onPress={saveAdminPassword} loading={savingAdminPassword} />
-              <View style={styles.sectionDivider} />
-              <Text style={styles.sectionHelp}>Cashier and barista password recovery is handled by admin through staff controls.</Text>
+                  <Text style={styles.fieldLabel}>Confirm New Password</Text>
+                  <TextInput
+                    value={adminConfirmPassword}
+                    onChangeText={setAdminConfirmPassword}
+                    placeholder="Re-enter new password"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    secureTextEntry
+                  />
+
+                  <ActionButton label="Update Admin Password" onPress={saveAdminPassword} loading={savingAdminPassword} />
+                  <Text style={styles.settingsNoteText}>Cashier and barista password recovery remains managed through staff controls.</Text>
+                </View>
+              </View>
             </View>
           ) : null}
 
@@ -820,55 +941,71 @@ export default function AdminScreen() {
               <Text style={styles.subSectionTitle}>Staff Accounts</Text>
               <Text style={styles.sectionHelp}>Create cashier and barista accounts here. Password changes are admin-only.</Text>
 
-              <Text style={styles.fieldLabel}>Search Staff</Text>
-              <TextInput
-                value={staffQueryInput}
-                onChangeText={setStaffQueryInput}
-                placeholder="Search by name, email, id, or role"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-              />
-              <View style={styles.actionRow}>
-                <ActionButton label="Apply Staff Search" onPress={applyStaffSearch} />
-                <Pressable style={[styles.actionButton, styles.ghostButton]} onPress={clearStaffSearch}>
-                  <Text style={styles.ghostButtonText}>Clear</Text>
-                </Pressable>
+              <View style={styles.staffToolsGrid}>
+                <View style={styles.staffBlockCard}>
+                  <Text style={styles.staffBlockTitle}>Find Staff</Text>
+                  <Text style={styles.staffBlockHint}>Search by name, email, id, or role.</Text>
+
+                  <Text style={styles.fieldLabel}>Search Staff</Text>
+                  <TextInput
+                    value={staffQueryInput}
+                    onChangeText={setStaffQueryInput}
+                    placeholder="Search by name, email, id, or role"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                  />
+                  <View style={styles.actionRow}>
+                    <ActionButton label="Apply Staff Search" onPress={applyStaffSearch} />
+                    <Pressable style={[styles.actionButton, styles.ghostButton]} onPress={clearStaffSearch}>
+                      <Text style={styles.ghostButtonText}>Clear</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View style={styles.staffBlockCard}>
+                  <Text style={styles.staffBlockTitle}>Create Account</Text>
+                  <Text style={styles.staffBlockHint}>Add staff with a temporary password, then assign role access.</Text>
+
+                  <Text style={styles.fieldLabel}>Full Name</Text>
+                  <TextInput
+                    value={staffName}
+                    onChangeText={setStaffName}
+                    placeholder="Staff Name"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                  />
+
+                  <Text style={styles.fieldLabel}>Email</Text>
+                  <TextInput
+                    value={staffEmail}
+                    onChangeText={setStaffEmail}
+                    placeholder="Input your Email"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+
+                  <Text style={styles.fieldLabel}>Temporary Password</Text>
+                  <TextInput
+                    value={staffPassword}
+                    onChangeText={setStaffPassword}
+                    placeholder="Temporary password (8+ characters)"
+                    placeholderTextColor={colors.muted}
+                    style={styles.input}
+                    secureTextEntry
+                  />
+
+                  <Text style={styles.fieldLabel}>Role</Text>
+                  <View style={styles.optionWrap}>
+                    {ROLE_OPTIONS.map((role) => (
+                      <RoleChip key={role} role={role} active={staffRole === role} onPress={() => setStaffRole(role)} />
+                    ))}
+                  </View>
+
+                  <ActionButton label="Add Staff Member" onPress={addStaff} loading={addingStaff} />
+                </View>
               </View>
-
-              <TextInput
-                value={staffName}
-                onChangeText={setStaffName}
-                placeholder="Staff Name"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-              />
-
-              <TextInput
-                value={staffEmail}
-                onChangeText={setStaffEmail}
-                placeholder="staff@cloudbrew.app"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-
-              <TextInput
-                value={staffPassword}
-                onChangeText={setStaffPassword}
-                placeholder="Temporary password (8+ characters)"
-                placeholderTextColor={colors.muted}
-                style={styles.input}
-                secureTextEntry
-              />
-
-              <View style={styles.optionWrap}>
-                {ROLE_OPTIONS.map((role) => (
-                  <RoleChip key={role} role={role} active={staffRole === role} onPress={() => setStaffRole(role)} />
-                ))}
-              </View>
-
-              <ActionButton label="Add Staff Member" onPress={addStaff} loading={addingStaff} />
 
               <View style={styles.pagerRow}>
                 <Pressable
@@ -900,15 +1037,19 @@ export default function AdminScreen() {
                 renderItem={({ item: member }) => (
                   <View style={styles.staffRowCard}>
                     <View style={styles.staffHeader}>
-                      <Text style={styles.staffName}>{member.name}</Text>
+                      <View style={styles.staffIdentityWrap}>
+                        <Text style={styles.staffName}>{member.name}</Text>
+                        <Text style={styles.staffRoleText}>{member.role}</Text>
+                      </View>
                       <Text style={[styles.staffStatus, !member.active && styles.staffStatusMuted]}>
                         {member.active ? 'ACTIVE' : 'INACTIVE'}
                       </Text>
                     </View>
 
-                    <Text style={styles.staffRoleText}>{member.role}</Text>
-                    <Text style={styles.staffMetaText}>Email: {member.email || 'N/A'}</Text>
-                    <Text style={styles.staffMetaText}>Password: managed by admin</Text>
+                    <View style={styles.staffMetaBlock}>
+                      <Text style={styles.staffMetaText}>Email: {member.email || 'N/A'}</Text>
+                      <Text style={styles.staffMetaText}>Password: managed by admin</Text>
+                    </View>
 
                     <View style={styles.staffActionRow}>
                       <Pressable style={styles.smallButton} onPress={() => beginEditStaff(member)}>
@@ -941,6 +1082,7 @@ export default function AdminScreen() {
 
                     {editingStaffId === member.id ? (
                       <View style={styles.inlineEditor}>
+                        <Text style={styles.staffBlockTitle}>Edit Staff Account</Text>
                         <Text style={styles.fieldLabel}>Edit Name</Text>
                         <TextInput value={editingStaffName} onChangeText={setEditingStaffName} style={styles.input} />
 
@@ -955,7 +1097,7 @@ export default function AdminScreen() {
                         <TextInput
                           value={editingStaffEmail}
                           onChangeText={setEditingStaffEmail}
-                          placeholder="staff@cloudbrew.app"
+                          placeholder="Input your Email"
                           placeholderTextColor={colors.muted}
                           style={styles.input}
                           keyboardType="email-address"
@@ -1233,9 +1375,38 @@ const styles = StyleSheet.create({
     fontFamily: typography.heading,
     fontWeight: '800',
   },
+  quickNavWrap: {
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  quickNavButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.panel,
+  },
+  quickNavButtonActive: {
+    borderColor: colors.accentDark,
+    backgroundColor: colors.accent,
+  },
+  quickNavButtonText: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  quickNavButtonTextActive: {
+    color: colors.white,
+  },
   sectionTitle: {
     color: colors.text,
-    fontSize: 22,
+    fontSize: 24,
     fontFamily: typography.heading,
     fontWeight: '800',
     marginBottom: spacing.sm,
@@ -1243,6 +1414,7 @@ const styles = StyleSheet.create({
   panelHint: {
     color: colors.muted,
     marginTop: 2,
+    lineHeight: 20,
   },
   panel: {
     backgroundColor: colors.panelRaised,
@@ -1256,6 +1428,78 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     shadowRadius: 12,
     elevation: 2,
+  },
+  recipeToolsGrid: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  recipeBlockCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  recipeBlockTitle: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  recipeBlockHint: {
+    color: colors.muted,
+    marginTop: spacing.xxs,
+    lineHeight: 20,
+  },
+  settingsToolsGrid: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  settingsBlockCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  settingsBlockTitle: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  settingsBlockHint: {
+    color: colors.muted,
+    marginTop: spacing.xxs,
+    lineHeight: 20,
+  },
+  settingsNoteText: {
+    color: colors.muted,
+    marginTop: spacing.sm,
+    lineHeight: 20,
+  },
+  staffToolsGrid: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  staffBlockCard: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  staffBlockTitle: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  staffBlockHint: {
+    color: colors.muted,
+    marginTop: spacing.xxs,
+    lineHeight: 20,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -1333,6 +1577,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 38,
     paddingVertical: spacing.xs,
     backgroundColor: colors.panelMuted,
   },
@@ -1354,7 +1600,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
     padding: spacing.sm,
-    minHeight: 44,
+    minHeight: 46,
     color: colors.text,
     backgroundColor: colors.panel,
   },
@@ -1399,7 +1645,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 38,
+    minHeight: 44,
     flex: 1,
   },
   actionText: {
@@ -1426,7 +1672,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    padding: spacing.sm,
+    padding: spacing.md,
     backgroundColor: colors.panel,
   },
   staffList: {
@@ -1436,37 +1682,56 @@ const styles = StyleSheet.create({
   staffHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+  },
+  staffIdentityWrap: {
+    gap: spacing.xxs,
   },
   staffName: {
     color: colors.text,
     fontFamily: typography.heading,
-    fontWeight: '700',
+    fontWeight: '800',
+    fontSize: 16,
   },
   staffRoleText: {
-    marginTop: 4,
-    color: colors.muted,
+    color: colors.accentDark,
     textTransform: 'capitalize',
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.4,
+  },
+  staffMetaBlock: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: spacing.xxs,
   },
   staffMetaText: {
-    marginTop: 4,
     color: colors.text,
     fontWeight: '600',
   },
   staffStatus: {
     color: colors.success,
+    backgroundColor: 'rgba(76, 175, 80, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(76, 175, 80, 0.34)',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xxs,
     fontWeight: '800',
     fontSize: 12,
     letterSpacing: 0.6,
   },
   staffStatusMuted: {
     color: colors.muted,
+    backgroundColor: colors.panelMuted,
+    borderColor: colors.border,
   },
   staffActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.xs,
+    gap: spacing.sm,
     marginTop: spacing.sm,
   },
   smallButton: {
@@ -1478,6 +1743,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 36,
   },
   inlineLoader: {
     marginTop: spacing.sm,
@@ -1487,6 +1753,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
+    gap: spacing.xxs,
   },
   smallButtonText: {
     color: colors.white,
@@ -1509,5 +1776,109 @@ const styles = StyleSheet.create({
   logMeta: {
     color: colors.muted,
     marginTop: 2,
+  },
+  realtimeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.panelMuted,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  realtimeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: spacing.xs,
+  },
+  realtimeDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  realtimeDotInactive: {
+    backgroundColor: colors.muted,
+  },
+  realtimeText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  panelSubtitle: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: spacing.sm,
+  },
+  drinkList: {
+    gap: spacing.xs,
+  },
+  drinkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.panel,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  drinkRank: {
+    color: colors.accent,
+    fontWeight: '700',
+    fontSize: 12,
+    width: 30,
+  },
+  drinkName: {
+    color: colors.text,
+    fontWeight: '600',
+    flex: 1,
+  },
+  drinkCount: {
+    color: colors.muted,
+    fontSize: 12,
+  },
+  recentOrdersList: {
+    gap: spacing.xs,
+  },
+  recentOrderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.panel,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  orderInfo: {
+    flex: 1,
+  },
+  orderItem: {
+    color: colors.text,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  orderTime: {
+    color: colors.muted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  orderStatus: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    backgroundColor: colors.panelMuted,
+    borderRadius: radius.sm,
+  },
+  orderStatusCompleted: {
+    backgroundColor: '#dcfce7',
+    color: '#166534',
   },
 });

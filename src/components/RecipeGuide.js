@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: colors.accentDark,
-    marginTop: 4,
+    marginTop: spacing.xxs,
     fontFamily: typography.heading,
     fontWeight: '600',
   },

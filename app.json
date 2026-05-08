@@ -2,6 +2,7 @@
   "expo": {
     "name": "Coffee Management System",
     "slug": "coffee-management-system",
+    "scheme": "cloudbrew",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",

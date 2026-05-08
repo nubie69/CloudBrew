@@ -23,7 +23,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.1)',
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: spacing.xxs,
     alignSelf: 'flex-start',
     minWidth: 104,
     alignItems: 'center',
@@ -34,6 +34,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'capitalize',
     fontSize: 12,
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
   },
 });

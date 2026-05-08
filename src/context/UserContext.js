@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
+  fetchAnalyticsOverview,
   createOrder,
   createStaffMember,
   deleteRecipe,
@@ -8,7 +9,13 @@ import {
   fetchBootstrapData,
   fetchHealth,
   fetchOperationsReport,
+  fetchQueueHealth,
+  runIntegrationsSelfTest,
+  fetchSalesAnalytics,
   fetchStaffDirectory,
+  fetchStaffKpis,
+  fetchTopItemsAnalytics,
+  uploadProductImage as uploadProductImageRequest,
   saveRecipe,
   updateOrderStatus as patchOrderStatus,
   updateStaffMember,
@@ -22,19 +29,33 @@ import {
   updateAdminRecoveryEmail,
 } from '../services/auth';
 import { clearAuthToken, setAuthToken } from '../services/http';
-import { notifyNewOrder } from '../services/notifications';
+import {
+  connectQueueRealtime,
+  subscribeToRealtimeStatus,
+  subscribeToOrders,
+  subscribeToOrderUpdates,
+} from '../services/notifications';
 import { ORDER_STATUS } from '../utils/helpers';
 
 const UserContext = createContext(null);
 const DEFAULT_STAFF_META = { total: 0, page: 1, pageSize: 10, totalPages: 1, query: '' };
 const DEFAULT_LOG_META = { total: 0, page: 1, pageSize: 20, totalPages: 1, query: '' };
 const DEFAULT_ADMIN_SETTINGS = { recoveryEmail: '', recoveryEmailConfigured: false };
+const DEFAULT_REALTIME_STATUS = { state: 'disconnected', message: 'Realtime offline', updatedAt: '' };
 
 function normalizeCollectionMeta(meta, fallback) {
   return {
     ...fallback,
     ...(meta || {}),
   };
+}
+
+function requireSuccessResponse(payload, fallbackMessage) {
+  if (!payload || payload.success === false) {
+    throw new Error(payload?.message || fallbackMessage);
+  }
+
+  return payload;
 }
 
 function updateMetaTotal(meta, delta) {
@@ -47,6 +68,35 @@ function updateMetaTotal(meta, delta) {
   };
 }
 
+function upsertOrder(orders, incoming) {
+  if (!incoming?.id) {
+    return orders;
+  }
+
+  const exists = orders.some((order) => order.id === incoming.id);
+  if (!exists) {
+    return [incoming, ...orders];
+  }
+
+  return orders.map((order) => (order.id === incoming.id ? { ...order, ...incoming } : order));
+}
+
+const DEFAULT_DASHBOARD_METRICS = {
+  totalSalesToday: 0,
+  pendingOrders: 0,
+  completedOrders: 0,
+  cancelledOrders: 0,
+  activeBaristas: 0,
+  activeCashiers: 0,
+  currentQueueCount: 0,
+  mostSoldDrinks: [],
+  recentOrders: [],
+  peakHours: {},
+  inventoryAlerts: [],
+  baristas: [],
+  lastUpdated: new Date().toISOString(),
+};
+
 export function UserProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthTokenState] = useState('');
@@ -57,6 +107,9 @@ export function UserProvider({ children }) {
   const [staff, setStaff] = useState([]);
   const [staffMeta, setStaffMeta] = useState(DEFAULT_STAFF_META);
   const [adminSettings, setAdminSettings] = useState(DEFAULT_ADMIN_SETTINGS);
+  const [realtimeStatus, setRealtimeStatus] = useState(DEFAULT_REALTIME_STATUS);
+  const [dashboardMetrics, setDashboardMetrics] = useState(DEFAULT_DASHBOARD_METRICS);
+  const [dashboardRefreshInterval, setDashboardRefreshInterval] = useState(null);
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState('');
 
@@ -78,6 +131,86 @@ export function UserProvider({ children }) {
     const payload = await fetchBootstrapData();
     syncState(payload);
     return payload;
+  };
+
+  const computeDashboardMetrics = async () => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      return;
+    }
+
+    try {
+      // Calculate metrics from current orders
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      const todaysOrders = orders.filter(
+        (order) => new Date(order.createdAt) >= todayStart
+      );
+      
+      const pendingCount = todaysOrders.filter(
+        (o) => o.status === ORDER_STATUS.PENDING
+      ).length;
+      
+      const completedCount = todaysOrders.filter(
+        (o) => o.status === ORDER_STATUS.COMPLETED
+      ).length;
+      
+      const inProgressCount = todaysOrders.filter(
+        (o) => o.status === ORDER_STATUS.IN_PROGRESS
+      ).length;
+
+      // Calculate total sales today
+      const totalSalesToday = todaysOrders
+        .filter((o) => o.paymentStatus === 'paid')
+        .reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
+      // Get most sold drinks
+      const drinkCounts = {};
+      todaysOrders.forEach((order) => {
+        const drink = order.item || 'Unknown';
+        drinkCounts[drink] = (drinkCounts[drink] || 0) + (order.quantity || 1);
+      });
+      const mostSoldDrinks = Object.entries(drinkCounts)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      // Get recent orders
+      const recentOrders = [...todaysOrders]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 10);
+
+      // Get active baristas and cashiers
+      const activeBaristas = staff.filter(
+        (s) => s.role === 'barista' && s.active
+      );
+      const activeCashiers = staff.filter(
+        (s) => s.role === 'cashier' && s.active
+      );
+
+      // Get queue count (pending + in-progress)
+      const currentQueueCount = pendingCount + inProgressCount;
+
+      setDashboardMetrics({
+        totalSalesToday,
+        pendingOrders: pendingCount,
+        completedOrders: completedCount,
+        cancelledOrders: 0,
+        activeBaristas: activeBaristas.length,
+        activeCashiers: activeCashiers.length,
+        currentQueueCount,
+        mostSoldDrinks,
+        recentOrders,
+        peakHours: {},
+        inventoryAlerts: [],
+        baristas: activeBaristas,
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Error computing dashboard metrics:', error);
+      }
+    }
   };
 
   useEffect(() => {
@@ -105,6 +238,64 @@ export function UserProvider({ children }) {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authToken || !currentUser) {
+      return undefined;
+    }
+
+    let mounted = true;
+    const disconnectRealtime = connectQueueRealtime(authToken);
+    const unsubscribeCreated = subscribeToOrders((order) => {
+      if (!mounted) {
+        return;
+      }
+      setOrders((prev) => upsertOrder(prev, order));
+    });
+    const unsubscribeUpdated = subscribeToOrderUpdates((order) => {
+      if (!mounted) {
+        return;
+      }
+      setOrders((prev) => upsertOrder(prev, order));
+    });
+    const unsubscribeRealtimeStatus = subscribeToRealtimeStatus((status) => {
+      if (!mounted) {
+        return;
+      }
+      setRealtimeStatus(status || DEFAULT_REALTIME_STATUS);
+    });
+
+    refreshData().catch(() => {
+      // Ignore bootstrap sync failures; realtime events can still continue.
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribeCreated();
+      unsubscribeUpdated();
+      unsubscribeRealtimeStatus();
+      disconnectRealtime();
+    };
+  }, [authToken, currentUser]);
+
+  // Auto-refresh dashboard metrics for admin
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      return undefined;
+    }
+
+    // Initial computation
+    computeDashboardMetrics();
+
+    // Set up auto-refresh every 3 seconds
+    const intervalId = setInterval(() => {
+      computeDashboardMetrics();
+    }, 3000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [currentUser, orders, staff]);
 
   const login = async (role, email, password) => {
     const authPayload = await loginWithCredentials(role, email, password);
@@ -142,6 +333,8 @@ export function UserProvider({ children }) {
     setStaff([]);
     setStaffMeta(DEFAULT_STAFF_META);
     setAdminSettings(DEFAULT_ADMIN_SETTINGS);
+    setRealtimeStatus(DEFAULT_REALTIME_STATUS);
+    setDashboardMetrics(DEFAULT_DASHBOARD_METRICS);
   };
 
   const ensureAdmin = () => {
@@ -193,8 +386,7 @@ export function UserProvider({ children }) {
     };
 
     const savedOrder = await createOrder(order);
-    setOrders((prev) => [savedOrder, ...prev]);
-    notifyNewOrder(savedOrder);
+    setOrders((prev) => upsertOrder(prev, savedOrder));
     return savedOrder;
   };
 
@@ -204,16 +396,7 @@ export function UserProvider({ children }) {
     }
 
     const updatedOrder = await patchOrderStatus(orderId, status, currentUser.name);
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id === orderId
-          ? {
-              ...order,
-              ...updatedOrder,
-            }
-          : order
-      )
-    );
+    setOrders((prev) => upsertOrder(prev, updatedOrder));
   };
 
   const updateRecipe = async (drinkName, recipe) => {
@@ -248,6 +431,15 @@ export function UserProvider({ children }) {
       });
       throw error;
     }
+  };
+
+  const uploadProductImage = async (imageData) => {
+    ensureAdmin();
+    if (!imageData) {
+      throw new Error('imageData is required.');
+    }
+
+    return uploadProductImageRequest(imageData);
   };
 
   const removeRecipe = async (drinkName) => {
@@ -359,9 +551,21 @@ export function UserProvider({ children }) {
   };
 
   const generateReport = () => fetchOperationsReport();
+  const runIntegrationSelfTest = () => runIntegrationsSelfTest();
+  const getAnalyticsOverview = (params = {}) => fetchAnalyticsOverview(params);
+  const getSalesAnalytics = (params = {}) => fetchSalesAnalytics(params);
+  const getTopItemsAnalytics = (params = {}) => fetchTopItemsAnalytics(params);
+  const getStaffKpis = (params = {}) => fetchStaffKpis(params);
+  const getQueueHealth = () => fetchQueueHealth();
 
-  const requestAdminResetCode = async (email) => requestAdminPasswordReset(email);
-  const resetAdminAccountPassword = async (email, resetCode, newPassword) => resetAdminPassword(email, resetCode, newPassword);
+  const requestAdminResetCode = async (email) => {
+    const response = await requestAdminPasswordReset(email);
+    return requireSuccessResponse(response, 'Unable to request password reset right now.');
+  };
+  const resetAdminAccountPassword = async (token, newPassword) => {
+    const response = await resetAdminPassword(token, newPassword);
+    return requireSuccessResponse(response, 'Unable to reset password right now.');
+  };
 
   const updateAdminPassword = async (currentPassword, newPassword) => {
     ensureAdmin();
@@ -371,11 +575,12 @@ export function UserProvider({ children }) {
   const saveAdminRecoveryEmail = async (recoveryEmail) => {
     ensureAdmin();
     const updated = await updateAdminRecoveryEmail(recoveryEmail);
+    const normalized = requireSuccessResponse(updated, 'Unable to save recovery email.');
     setAdminSettings({
-      recoveryEmail: updated?.recoveryEmail || '',
-      recoveryEmailConfigured: Boolean(updated?.recoveryEmailConfigured),
+      recoveryEmail: normalized?.recoveryEmail || '',
+      recoveryEmailConfigured: Boolean(normalized?.recoveryEmailConfigured),
     });
-    return updated;
+    return normalized;
   };
 
   const value = useMemo(
@@ -388,15 +593,19 @@ export function UserProvider({ children }) {
       staff,
       staffMeta,
       adminSettings,
+      realtimeStatus,
+      dashboardMetrics,
       ready,
       bootError,
       authToken,
       login,
       logout,
       refreshData,
+      computeDashboardMetrics,
       placeOrder,
       setOrderStatus,
       updateRecipe,
+      uploadProductImage,
       removeRecipe,
       addStaffMember,
       setStaffActive,
@@ -405,6 +614,12 @@ export function UserProvider({ children }) {
       loadStaff,
       loadLogs,
       generateReport,
+      runIntegrationSelfTest,
+      getAnalyticsOverview,
+      getSalesAnalytics,
+      getTopItemsAnalytics,
+      getStaffKpis,
+      getQueueHealth,
       requestAdminResetCode,
       resetAdminAccountPassword,
       updateAdminPassword,
@@ -419,6 +634,8 @@ export function UserProvider({ children }) {
       staff,
       staffMeta,
       adminSettings,
+      realtimeStatus,
+      dashboardMetrics,
       ready,
       bootError,
       authToken,

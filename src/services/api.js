@@ -43,6 +43,13 @@ export function saveRecipe(drinkName, recipe) {
   });
 }
 
+export function uploadProductImage(imageData) {
+  return request('/uploads/product-image', {
+    method: 'POST',
+    body: JSON.stringify({ imageData }),
+  });
+}
+
 export function deleteRecipe(drinkName) {
   return request(`/recipes/${encodeURIComponent(drinkName)}`, {
     method: 'DELETE',
@@ -88,4 +95,30 @@ export function fetchOperationsReport() {
   return request('/reports', {
     method: 'POST',
   });
+}
+
+export function runIntegrationsSelfTest() {
+  return request('/integrations/self-test', {
+    method: 'POST',
+  });
+}
+
+export function fetchSalesAnalytics(params = {}) {
+  return request(`/analytics/sales${buildQueryString(params)}`);
+}
+
+export function fetchAnalyticsOverview(params = {}) {
+  return request(`/analytics/overview${buildQueryString(params)}`);
+}
+
+export function fetchTopItemsAnalytics(params = {}) {
+  return request(`/analytics/top-items${buildQueryString(params)}`);
+}
+
+export function fetchStaffKpis(params = {}) {
+  return request(`/analytics/staff-kpis${buildQueryString(params)}`);
+}
+
+export function fetchQueueHealth() {
+  return request('/analytics/queue-health');
 }
