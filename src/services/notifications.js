@@ -1,3 +1,6 @@
+import { io } from 'socket.io-client';
+import { getApiUrl } from './http';
+
 const createdSubscribers = new Set();
 const updatedSubscribers = new Set();
 const statusSubscribers = new Set();
@@ -6,9 +9,7 @@ let currentRealtimeStatus = {
   message: 'Realtime offline',
   updatedAt: new Date().toISOString(),
 };
-const PUSHER_CHANNEL = 'cloudbrew-queue';
-const PUSHER_KEY = String(process.env.EXPO_PUBLIC_PUSHER_KEY || '').trim();
-const PUSHER_CLUSTER = String(process.env.EXPO_PUBLIC_PUSHER_CLUSTER || '').trim();
+let realtimeSocket = null;
 
 function notify(subscribers, payload) {
   subscribers.forEach((callback) => callback(payload));
@@ -21,19 +22,6 @@ function publishRealtimeStatus(state, message) {
     updatedAt: new Date().toISOString(),
   };
   notify(statusSubscribers, currentRealtimeStatus);
-}
-
-let pusherClient = null;
-let queueChannel = null;
-
-function loadPusherClient() {
-  try {
-    // Lazy-load to avoid crashing app startup if native/runtime support is missing.
-    const moduleRef = require('pusher-js/react-native');
-    return moduleRef?.default || moduleRef;
-  } catch (_error) {
-    return null;
-  }
 }
 
 function handleQueueEvent(eventPayload) {
@@ -59,63 +47,45 @@ export function connectQueueRealtime(token) {
     return () => {};
   }
 
-  if (!PUSHER_KEY || !PUSHER_CLUSTER) {
-    publishRealtimeStatus('disconnected', 'Pusher not configured');
-    return () => {};
-  }
-
   try {
-    if (pusherClient) {
-      pusherClient.disconnect();
-      pusherClient = null;
-    }
-    queueChannel = null;
-
-    const PusherClient = loadPusherClient();
-    if (!PusherClient) {
-      publishRealtimeStatus('disconnected', 'Pusher runtime unavailable');
-      return () => {};
+    if (realtimeSocket) {
+      realtimeSocket.disconnect();
+      realtimeSocket = null;
     }
 
-    pusherClient = new PusherClient(PUSHER_KEY, {
-      cluster: PUSHER_CLUSTER,
+    const socketUrl = getApiUrl().replace(/\/api\/?$/, '');
+    realtimeSocket = io(socketUrl, {
+      auth: {
+        token,
+      },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Infinity,
     });
 
-    const connection = pusherClient?.connection;
-    if (connection?.bind) {
-      connection.bind('connected', () => publishRealtimeStatus('connected', 'Realtime queue live'));
-      connection.bind('connecting', () => publishRealtimeStatus('reconnecting', 'Connecting to live queue...'));
-      connection.bind('unavailable', () => publishRealtimeStatus('disconnected', 'Realtime unavailable'));
-      connection.bind('disconnected', () => publishRealtimeStatus('disconnected', 'Realtime disconnected'));
-    }
-
-    queueChannel = pusherClient.subscribe(PUSHER_CHANNEL);
-    queueChannel.bind('queue.order.created', (payload) => handleQueueEvent(payload));
-    queueChannel.bind('queue.order.updated', (payload) => handleQueueEvent(payload));
+    realtimeSocket.on('connect', () => publishRealtimeStatus('connected', 'Realtime queue live'));
+    realtimeSocket.on('queue.ready', () => publishRealtimeStatus('connected', 'Realtime queue live'));
+    realtimeSocket.on('disconnect', () => publishRealtimeStatus('disconnected', 'Realtime disconnected'));
+    realtimeSocket.on('connect_error', (error) => {
+      publishRealtimeStatus('disconnected', `Realtime disabled: ${error?.message || 'connection error'}`);
+      if (__DEV__) {
+        console.warn('[REALTIME SOCKET ERROR]', error);
+      }
+    });
+    realtimeSocket.on('queue.event', (payload) => handleQueueEvent(payload));
 
     publishRealtimeStatus('reconnecting', 'Connecting to live queue...');
 
     return () => {
-      if (!pusherClient) {
+      if (!realtimeSocket) {
         return;
       }
 
-      if (queueChannel) {
-        queueChannel.unbind('queue.order.created');
-        queueChannel.unbind('queue.order.updated');
-        pusherClient.unsubscribe(PUSHER_CHANNEL);
-        queueChannel = null;
-      }
-
-      if (connection?.unbind) {
-        connection.unbind('connected');
-        connection.unbind('connecting');
-        connection.unbind('unavailable');
-        connection.unbind('disconnected');
-      }
-
-      pusherClient.disconnect();
-      pusherClient = null;
+      realtimeSocket.removeAllListeners();
+      realtimeSocket.disconnect();
+      realtimeSocket = null;
       publishRealtimeStatus('disconnected', 'Realtime offline');
     };
   } catch (error) {

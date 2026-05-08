@@ -22,6 +22,7 @@ export default function BaristaScreen() {
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -69,15 +70,23 @@ export default function BaristaScreen() {
     () => orders.filter((o) => o.status === ORDER_STATUS.COMPLETED).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
     [orders]
   );
+  const liveQueueCount = activeOrders.length;
+  const liveQueueLabel = socketConnected ? 'Live Queue Active' : realtimeStatus?.message || 'Live Queue Offline';
 
   const startOrder = (id) => setOrderStatus && setOrderStatus(id, ORDER_STATUS.IN_PROGRESS);
   const completeOrder = (id) => setOrderStatus && setOrderStatus(id, ORDER_STATUS.COMPLETED);
+  const selectedRecipe = selectedOrder ? recipes[selectedOrder.item] : null;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Barista Board</Text>
-        <Text style={styles.subtitle}>{socketConnected ? 'Realtime: connected' : 'Realtime: disconnected'}</Text>
+        <View style={styles.liveQueueBadge}>
+          <View style={[styles.liveDot, socketConnected && styles.liveDotActive]} />
+          <Text style={styles.liveQueueText}>{liveQueueLabel}</Text>
+          <Text style={styles.liveQueueCount}>{liveQueueCount} orders</Text>
+        </View>
+        <Text style={styles.subtitle}>{socketConnected ? 'Realtime updates are streaming in now.' : 'Waiting for realtime queue updates.'}</Text>
       </View>
 
       <View style={styles.viewSwitch}>
@@ -101,7 +110,7 @@ export default function BaristaScreen() {
                   ...(order.status === ORDER_STATUS.PENDING ? [{ label: 'Start', onPress: () => startOrder(order.id) }] : []),
                   ...(order.status === ORDER_STATUS.IN_PROGRESS ? [{ label: 'Complete', onPress: () => completeOrder(order.id) }] : []),
                 ]}
-                onShowRecipe={() => {}}
+                onShowRecipe={() => setSelectedOrder(order)}
               />
             ))
           ) : (
@@ -137,6 +146,8 @@ export default function BaristaScreen() {
         </View>
       )}
 
+      <RecipeGuide visible={Boolean(selectedOrder)} order={selectedOrder} recipe={selectedRecipe} onClose={() => setSelectedOrder(null)} />
+
     </ScrollView>
   );
 }
@@ -145,6 +156,39 @@ const styles = StyleSheet.create({
   container: { padding: spacing.md, paddingBottom: 120 },
   header: { marginBottom: spacing.md },
   title: { fontSize: 24, fontFamily: typography.heading, fontWeight: '700' },
+  liveQueueBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.panel,
+  },
+  liveDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 99,
+    backgroundColor: colors.muted,
+  },
+  liveDotActive: {
+    backgroundColor: colors.success,
+  },
+  liveQueueText: {
+    color: colors.accentDark,
+    fontFamily: typography.heading,
+    fontWeight: '700',
+  },
+  liveQueueCount: {
+    color: colors.text,
+    fontFamily: typography.heading,
+    fontWeight: '600',
+  },
   subtitle: { color: colors.muted, marginTop: 6 },
   viewSwitch: { flexDirection: 'row', marginBottom: spacing.md },
   viewButton: { padding: 8, marginRight: 8, borderRadius: 6, borderWidth: 1, borderColor: colors.border },
